@@ -1,3 +1,5 @@
+This repository contains the official code for the paper [Neural Common Neighbor with Completion for Link Prediction](https://arxiv.org/pdf/2302.00890.pdf).
+
 **Environment**
 
 Tested Combination:
