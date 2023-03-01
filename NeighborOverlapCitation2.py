@@ -115,17 +115,17 @@ def test(model, predictor, data, split_edge, evaluator, batch_size):
 
 
 def parseargs():
-    # GCN params {'hiddim': 128, 'mplayers': 1, 'lr': 0.001, 'batch_size': 65536, 'maskinput': True, 'dropout': 0.2, 'res': True}
-    # INCN1 params {'hiddim': 32, 'mplayers': 1, 'lr': 0.0003, 'batch_size': 8192, 'maskinput': True, 'dropout': 0.3, 'res': True, 'model': 'max', 'scale': 6.4, 'offset': 0.95}
-    parser = argparse.ArgumentParser(description='OGBL-COLLAB (GNN)')
+    #please refer to NeighborOverlap.py/parseargs for the meanings of these options
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--maskinput', action="store_true")
+    
     parser.add_argument('--mplayers', type=int, default=1)
     parser.add_argument('--nnlayers', type=int, default=3)
+    parser.add_argument('--hiddim', type=int, default=32)
     parser.add_argument('--ln', action="store_true")
     parser.add_argument('--lnnn', action="store_true")
     parser.add_argument('--res', action="store_true")
     parser.add_argument('--jk', action="store_true")
-    parser.add_argument('--maskinput', action="store_true")
-    parser.add_argument('--hiddim', type=int, default=32)
     parser.add_argument('--gnndp', type=float, default=0.3)
     parser.add_argument('--xdp', type=float, default=0.3)
     parser.add_argument('--tdp', type=float, default=0.3)

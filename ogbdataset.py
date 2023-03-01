@@ -7,8 +7,8 @@ from torch_geometric.datasets import Planetoid
 from torch_geometric.utils import train_test_split_edges, negative_sampling, to_undirected
 from torch_geometric.transforms import RandomLinkSplit
 
-
-def randomsplit(dataset, val_ratio=0.10, test_ratio=0.2):
+# random split dataset
+def randomsplit(dataset, val_ratio: float=0.10, test_ratio: float=0.2):
     def removerepeated(ei):
         ei = to_undirected(ei)
         ei = ei[:, ei[0]<ei[1]]
@@ -26,7 +26,7 @@ def randomsplit(dataset, val_ratio=0.10, test_ratio=0.2):
     split_edge['test']['edge_neg'] = removerepeated(data.test_neg_edge_index).t()
     return split_edge
 
-def loaddataset(name, use_valedges_as_input, load=None):
+def loaddataset(name: str, use_valedges_as_input: bool, load=None):
     if name in ["Cora", "Citeseer", "Pubmed"]:
         dataset = Planetoid(root="dataset", name=name)
         split_edge = randomsplit(dataset)
@@ -41,8 +41,6 @@ def loaddataset(name, use_valedges_as_input, load=None):
         edge_index = data.edge_index
     data.edge_weight = None 
     print(data.num_nodes, edge_index.max())
-    # if data.edge_weight is None else data.edge_weight.view(-1).to(torch.float)
-    # data = T.ToSparseTensor()(data)
     data.adj_t = SparseTensor.from_edge_index(edge_index, sparse_sizes=(data.num_nodes, data.num_nodes))
     data.adj_t = data.adj_t.to_symmetric().coalesce()
     data.max_x = -1
@@ -50,7 +48,6 @@ def loaddataset(name, use_valedges_as_input, load=None):
         data.x = torch.argmax(data.x, dim=-1)
         data.max_x = torch.max(data.x).item()
     elif name == "ddi":
-        #data.x = torch.zeros((data.num_nodes, 1))
         data.x = torch.arange(data.num_nodes)
         data.max_x = data.num_nodes
     if load is not None:
