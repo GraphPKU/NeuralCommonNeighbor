@@ -6,7 +6,9 @@ from typing import List, Tuple
 
 
 class PermIterator:
-
+    '''
+    Iterator of a permutation
+    '''
     def __init__(self, device, size, bs, training=True) -> None:
         self.bs = bs
         self.training = training
@@ -30,9 +32,10 @@ class PermIterator:
         return ret
 
 
-# 不能保证不重复采样，并且会去重导致少于deg数样本
-# 不能把value不设成1，否则会导致少于deg行被放大
 def sparsesample(adj: SparseTensor, deg: int) -> SparseTensor:
+    '''
+    sampling elements from a adjacency matrix
+    '''
     rowptr, col, _ = adj.csr()
     rowcount = adj.storage.rowcount()
     mask = rowcount > 0
@@ -56,8 +59,10 @@ def sparsesample(adj: SparseTensor, deg: int) -> SparseTensor:
     return ret
 
 
-# 不能保证不重复采样，并且会去重导致少于deg数样本，但是带了权重
 def sparsesample2(adj: SparseTensor, deg: int) -> SparseTensor:
+    '''
+    another implementation for sampling elements from a adjacency matrix
+    '''
     rowptr, col, _ = adj.csr()
     rowcount = adj.storage.rowcount()
     mask = rowcount > deg
@@ -90,6 +95,10 @@ def sparsesample2(adj: SparseTensor, deg: int) -> SparseTensor:
 
 
 def sparsesample_reweight(adj: SparseTensor, deg: int) -> SparseTensor:
+    '''
+    another implementation for sampling elements from a adjacency matrix. It will also scale the sampled elements.
+    
+    '''
     rowptr, col, _ = adj.csr()
     rowcount = adj.storage.rowcount()
     mask = rowcount > deg
@@ -124,8 +133,7 @@ def sparsesample_reweight(adj: SparseTensor, deg: int) -> SparseTensor:
 
 
 def elem2spm(element: Tensor, sizes: List[int]) -> SparseTensor:
-    #row = torch.div(element, sizes[-1], rounding_mode="floor")
-    #col = element - row * sizes[-1]
+    # Convert adjacency matrix to a 1-d vector
     col = torch.bitwise_and(element, 0xffffffff)
     row = torch.bitwise_right_shift(element, 32)
     return SparseTensor(row=row, col=col, sparse_sizes=sizes).to_device(
@@ -133,6 +141,7 @@ def elem2spm(element: Tensor, sizes: List[int]) -> SparseTensor:
 
 
 def spm2elem(spm: SparseTensor) -> Tensor:
+    # Convert 1-d vector to an adjacency matrix
     sizes = spm.sizes()
     elem = torch.bitwise_left_shift(spm.storage.row(),
                                     32).add_(spm.storage.col())
@@ -142,6 +151,9 @@ def spm2elem(spm: SparseTensor) -> Tensor:
 
 
 def spmoverlap_(adj1: SparseTensor, adj2: SparseTensor) -> SparseTensor:
+    '''
+    Compute the overlap of neighbors (rows in adj). The returned matrix is similar to the hadamard product of adj1 and adj2
+    '''
     assert adj1.sizes() == adj2.sizes()
     element1 = spm2elem(adj1)
     element2 = spm2elem(adj2)
@@ -224,7 +236,7 @@ def adjoverlap(adj1: SparseTensor,
                calresadj: bool = False,
                cnsampledeg: int = -1,
                ressampledeg: int = -1):
-    # assert adj1.is_coalesced(), adj2.is_coalesced()
+    # a wrapper for functions above.
     adj1 = adj1[tarei[0]]
     adj2 = adj2[tarei[1]]
     if calresadj:
