@@ -31,32 +31,37 @@ def train(model,
           optimizer,
           batch_size,
           maskinput: bool = True,
-          cnprobs: Iterable[float]=[],
-          alpha: float=None):
-    
+          cnprobs: Iterable[float] = [],
+          alpha: float = None):
+
     if alpha is not None:
         predictor.setalpha(alpha)
-    
+
     model.train()
     predictor.train()
 
     pos_train_edge = split_edge['train']['edge'].to(data.x.device)
     pos_train_edge = pos_train_edge.t()
+    pos_train_edge_attr = split_edge["train"].get("edge_attr", None)
+    if pos_train_edge_attr is not None:
+        pos_train_edge_attr = pos_train_edge_attr.to(data.x.device)
 
     total_loss = []
     adjmask = torch.ones_like(pos_train_edge[0], dtype=torch.bool)
-    
-    negedge = negative_sampling(data.edge_index.to(pos_train_edge.device), data.adj_t.sizes()[0])
-    for perm in PermIterator(
-            adjmask.device, adjmask.shape[0], batch_size
-    ):
+
+    negedge = negative_sampling(data.edge_index.to(pos_train_edge.device),
+                                data.adj_t.sizes()[0])
+    for perm in PermIterator(adjmask.device, adjmask.shape[0], batch_size):
         optimizer.zero_grad()
         if maskinput:
             adjmask[perm] = 0
             tei = pos_train_edge[:, adjmask]
-            adj = SparseTensor.from_edge_index(tei,
-                               sparse_sizes=(data.num_nodes, data.num_nodes)).to_device(
-                                   pos_train_edge.device, non_blocking=True)
+            tea = None if pos_train_edge_attr is None else pos_train_edge_attr[adjmask]
+            adj = SparseTensor.from_edge_index(
+                tei, tea,
+                sparse_sizes=(data.num_nodes,
+                              data.num_nodes)).to_device(pos_train_edge.device,
+                                                         non_blocking=True)
             adjmask[perm] = 1
             adj = adj.to_symmetric()
         else:
@@ -64,13 +69,16 @@ def train(model,
         h = model(data.x, adj)
         edge = pos_train_edge[:, perm]
         pos_outs = predictor.multidomainforward(h,
-                                                    adj,
-                                                    edge,
-                                                    cndropprobs=cnprobs)
+                                                adj,
+                                                edge,
+                                                cndropprobs=cnprobs)
 
         pos_losss = -F.logsigmoid(pos_outs).mean()
         edge = negedge[:, perm]
-        neg_outs = predictor.multidomainforward(h, adj, edge, cndropprobs=cnprobs)
+        neg_outs = predictor.multidomainforward(h,
+                                                adj,
+                                                edge,
+                                                cndropprobs=cnprobs)
         neg_losss = -F.logsigmoid(-neg_outs).mean()
         loss = neg_losss + pos_losss
         loss.backward()
@@ -96,14 +104,12 @@ def test(model, predictor, data, split_edge, evaluator, batch_size,
     adj = data.adj_t
     h = model(data.x, adj)
 
-    
     pos_train_pred = torch.cat([
         predictor(h, adj, pos_train_edge[perm].t()).squeeze().cpu()
         for perm in PermIterator(pos_train_edge.device,
                                  pos_train_edge.shape[0], batch_size, False)
     ],
                                dim=0)
-
 
     pos_valid_pred = torch.cat([
         predictor(h, adj, pos_valid_edge[perm].t()).squeeze().cpu()
@@ -159,30 +165,89 @@ def test(model, predictor, data, split_edge, evaluator, batch_size,
 
 def parseargs():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--use_valedges_as_input', action='store_true', help="whether to add validation edges to the input adjacency matrix of gnn")
-    parser.add_argument('--epochs', type=int, default=40, help="number of epochs")
-    parser.add_argument('--runs', type=int, default=3, help="number of repeated runs")
+    parser.add_argument(
+        '--use_valedges_as_input',
+        action='store_true',
+        help=
+        "whether to add validation edges to the input adjacency matrix of gnn")
+    parser.add_argument('--epochs',
+                        type=int,
+                        default=40,
+                        help="number of epochs")
+    parser.add_argument('--runs',
+                        type=int,
+                        default=3,
+                        help="number of repeated runs")
     parser.add_argument('--dataset', type=str, default="collab")
-    
-    parser.add_argument('--batch_size', type=int, default=8192, help="batch size")
-    parser.add_argument('--testbs', type=int, default=8192, help="batch size for test")
-    parser.add_argument('--maskinput', action="store_true", help="whether to use target link removal")
 
-    parser.add_argument('--mplayers', type=int, default=1, help="number of message passing layers")
-    parser.add_argument('--nnlayers', type=int, default=3, help="number of mlp layers")
-    parser.add_argument('--hiddim', type=int, default=32, help="hidden dimension")
-    parser.add_argument('--ln', action="store_true", help="whether to use layernorm in MPNN")
-    parser.add_argument('--lnnn', action="store_true", help="whether to use layernorm in mlp")
-    parser.add_argument('--res', action="store_true", help="whether to use residual connection")
-    parser.add_argument('--jk', action="store_true", help="whether to use JumpingKnowledge connection")
-    parser.add_argument('--gnndp', type=float, default=0.3, help="dropout ratio of gnn")
-    parser.add_argument('--xdp', type=float, default=0.3, help="dropout ratio of gnn")
-    parser.add_argument('--tdp', type=float, default=0.3, help="dropout ratio of gnn")
-    parser.add_argument('--gnnedp', type=float, default=0.3, help="edge dropout ratio of gnn")
-    parser.add_argument('--predp', type=float, default=0.3, help="dropout ratio of predictor")
-    parser.add_argument('--preedp', type=float, default=0.3, help="edge dropout ratio of predictor")
-    parser.add_argument('--gnnlr', type=float, default=0.0003, help="learning rate of gnn")
-    parser.add_argument('--prelr', type=float, default=0.0003, help="learning rate of predictor")
+    parser.add_argument('--batch_size',
+                        type=int,
+                        default=8192,
+                        help="batch size")
+    parser.add_argument('--testbs',
+                        type=int,
+                        default=8192,
+                        help="batch size for test")
+    parser.add_argument('--maskinput',
+                        action="store_true",
+                        help="whether to use target link removal")
+
+    parser.add_argument('--mplayers',
+                        type=int,
+                        default=1,
+                        help="number of message passing layers")
+    parser.add_argument('--nnlayers',
+                        type=int,
+                        default=3,
+                        help="number of mlp layers")
+    parser.add_argument('--hiddim',
+                        type=int,
+                        default=32,
+                        help="hidden dimension")
+    parser.add_argument('--ln',
+                        action="store_true",
+                        help="whether to use layernorm in MPNN")
+    parser.add_argument('--lnnn',
+                        action="store_true",
+                        help="whether to use layernorm in mlp")
+    parser.add_argument('--res',
+                        action="store_true",
+                        help="whether to use residual connection")
+    parser.add_argument('--jk',
+                        action="store_true",
+                        help="whether to use JumpingKnowledge connection")
+    parser.add_argument('--gnndp',
+                        type=float,
+                        default=0.3,
+                        help="dropout ratio of gnn")
+    parser.add_argument('--xdp',
+                        type=float,
+                        default=0.3,
+                        help="dropout ratio of gnn")
+    parser.add_argument('--tdp',
+                        type=float,
+                        default=0.3,
+                        help="dropout ratio of gnn")
+    parser.add_argument('--gnnedp',
+                        type=float,
+                        default=0.3,
+                        help="edge dropout ratio of gnn")
+    parser.add_argument('--predp',
+                        type=float,
+                        default=0.3,
+                        help="dropout ratio of predictor")
+    parser.add_argument('--preedp',
+                        type=float,
+                        default=0.3,
+                        help="edge dropout ratio of predictor")
+    parser.add_argument('--gnnlr',
+                        type=float,
+                        default=0.0003,
+                        help="learning rate of gnn")
+    parser.add_argument('--prelr',
+                        type=float,
+                        default=0.0003,
+                        help="learning rate of predictor")
     # detailed hyperparameters
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--alpha', type=float, default=1)
@@ -190,8 +255,14 @@ def parseargs():
     parser.add_argument("--tailact", action="store_true")
     parser.add_argument("--twolayerlin", action="store_true")
     parser.add_argument("--increasealpha", action="store_true")
-    
-    parser.add_argument('--splitsize', type=int, default=-1, help="split some operations inner the model. Only speed and GPU memory consumption are affected.")
+
+    parser.add_argument(
+        '--splitsize',
+        type=int,
+        default=-1,
+        help=
+        "split some operations inner the model. Only speed and GPU memory consumption are affected."
+    )
 
     # parameters used to calibrate the edge existence probability in NCNC
     parser.add_argument('--probscale', type=float, default=5)
@@ -199,27 +270,53 @@ def parseargs():
     parser.add_argument('--pt', type=float, default=0.5)
     parser.add_argument("--learnpt", action="store_true")
 
-    # For scalability, NCNC samples neighbors to complete common neighbor. 
-    parser.add_argument('--trndeg', type=int, default=-1, help="maximum number of sampled neighbors during the training process. -1 means no sample")
-    parser.add_argument('--tstdeg', type=int, default=-1, help="maximum number of sampled neighbors during the test process")
-    # NCN can sample common neighbors for scalability. Generally not used. 
+    # For scalability, NCNC samples neighbors to complete common neighbor.
+    parser.add_argument(
+        '--trndeg',
+        type=int,
+        default=-1,
+        help=
+        "maximum number of sampled neighbors during the training process. -1 means no sample"
+    )
+    parser.add_argument(
+        '--tstdeg',
+        type=int,
+        default=-1,
+        help="maximum number of sampled neighbors during the test process")
+    # NCN can sample common neighbors for scalability. Generally not used.
     parser.add_argument('--cndeg', type=int, default=-1)
-    
+
     # predictor used, such as NCN, NCNC
     parser.add_argument('--predictor', choices=predictor_dict.keys())
-    parser.add_argument("--depth", type=int, default=1, help="number of completion steps in NCNC")
+    parser.add_argument("--depth",
+                        type=int,
+                        default=1,
+                        help="number of completion steps in NCNC")
     # gnn used, such as gin, gcn.
     parser.add_argument('--model', choices=convdict.keys())
 
-    parser.add_argument('--save_gemb', action="store_true", help="whether to save node representations produced by GNN")
-    parser.add_argument('--load', type=str, help="where to load node representations produced by GNN")
-    parser.add_argument("--loadmod", action="store_true", help="whether to load trained models")
-    parser.add_argument("--savemod", action="store_true", help="whether to save trained models")
-    
-    parser.add_argument("--savex", action="store_true", help="whether to save trained node embeddings")
-    parser.add_argument("--loadx", action="store_true", help="whether to load trained node embeddings")
+    parser.add_argument(
+        '--save_gemb',
+        action="store_true",
+        help="whether to save node representations produced by GNN")
+    parser.add_argument(
+        '--load',
+        type=str,
+        help="where to load node representations produced by GNN")
+    parser.add_argument("--loadmod",
+                        action="store_true",
+                        help="whether to load trained models")
+    parser.add_argument("--savemod",
+                        action="store_true",
+                        help="whether to save trained models")
 
-    
+    parser.add_argument("--savex",
+                        action="store_true",
+                        help="whether to save trained node embeddings")
+    parser.add_argument("--loadx",
+                        action="store_true",
+                        help="whether to load trained node embeddings")
+
     # not used in experiments
     parser.add_argument('--cnprob', type=float, default=0)
     args = parser.parse_args()
@@ -231,66 +328,111 @@ def main():
     print(args, flush=True)
 
     hpstr = str(args).replace(" ", "").replace("Namespace(", "").replace(
-        ")", "").replace("True", "1").replace("False", "0").replace("=", "").replace("epochs", "").replace("runs", "").replace("save_gemb", "")
+        ")", "").replace("True",
+                         "1").replace("False", "0").replace("=", "").replace(
+                             "epochs",
+                             "").replace("runs", "").replace("save_gemb", "")
     writer = SummaryWriter(f"./rec/{args.model}_{args.predictor}")
     writer.add_text("hyperparams", hpstr)
 
-    if args.dataset in ["Cora", "Citeseer", "Pubmed"]:
-        evaluator = Evaluator(name=f'ogbl-ppa')
-    else:
+    if args.dataset in ["collab", "ppa", "ddi", "citation2"]:
         evaluator = Evaluator(name=f'ogbl-{args.dataset}')
+    else:
+        evaluator = Evaluator(name=f'ogbl-ppa')
 
     device = torch.device(f'cuda' if torch.cuda.is_available() else 'cpu')
-    data, split_edge = loaddataset(args.dataset, args.use_valedges_as_input, args.load)
+    data, split_edge = loaddataset(args.dataset, args.use_valedges_as_input,
+                                   args.load)
     data = data.to(device)
 
     predfn = predictor_dict[args.predictor]
     if args.predictor != "cn0":
         predfn = partial(predfn, cndeg=args.cndeg)
     if args.predictor in ["cn1", "incn1cn1", "scn1", "catscn1", "sincn1cn1"]:
-        predfn = partial(predfn, use_xlin=args.use_xlin, tailact=args.tailact, twolayerlin=args.twolayerlin, beta=args.beta)
+        predfn = partial(predfn,
+                         use_xlin=args.use_xlin,
+                         tailact=args.tailact,
+                         twolayerlin=args.twolayerlin,
+                         beta=args.beta)
     if args.predictor == "incn1cn1":
-        predfn = partial(predfn, depth=args.depth, splitsize=args.splitsize, scale=args.probscale, offset=args.proboffset, trainresdeg=args.trndeg, testresdeg=args.tstdeg, pt=args.pt, learnablept=args.learnpt, alpha=args.alpha)
-    
+        predfn = partial(predfn,
+                         depth=args.depth,
+                         splitsize=args.splitsize,
+                         scale=args.probscale,
+                         offset=args.proboffset,
+                         trainresdeg=args.trndeg,
+                         testresdeg=args.tstdeg,
+                         pt=args.pt,
+                         learnablept=args.learnpt,
+                         alpha=args.alpha)
+
     ret = []
 
     for run in range(0, args.runs):
         set_seed(run)
         if args.dataset in ["Cora", "Citeseer", "Pubmed"]:
-            data, split_edge = loaddataset(args.dataset, args.use_valedges_as_input, args.load) # get a new split of dataset
+            data, split_edge = loaddataset(
+                args.dataset, args.use_valedges_as_input,
+                args.load)  # get a new split of dataset
             data = data.to(device)
         bestscore = None
-        
+
         # build model
-        model = GCN(data.num_features, args.hiddim, args.hiddim, args.mplayers,
-                    args.gnndp, args.ln, args.res, data.max_x,
-                    args.model, args.jk, args.gnnedp,  xdropout=args.xdp, taildropout=args.tdp, noinputlin=args.loadx).to(device)
+        model = GCN(data.num_features,
+                    args.hiddim,
+                    args.hiddim,
+                    args.mplayers,
+                    args.gnndp,
+                    args.ln,
+                    args.res,
+                    data.max_x,
+                    args.model,
+                    args.jk,
+                    args.gnnedp,
+                    xdropout=args.xdp,
+                    taildropout=args.tdp,
+                    noinputlin=args.loadx).to(device)
         if args.loadx:
             with torch.no_grad():
-                model.xemb[0].weight.copy_(torch.load(f"gemb/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt", map_location="cpu"))
+                model.xemb[0].weight.copy_(
+                    torch.load(
+                        f"gemb/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
+                        map_location="cpu"))
             model.xemb[0].weight.requires_grad_(False)
         predictor = predfn(args.hiddim, args.hiddim, 1, args.nnlayers,
                            args.predp, args.preedp, args.lnnn).to(device)
         if args.loadmod:
-            keys = model.load_state_dict(torch.load(f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt", map_location="cpu"), strict=False)
+            keys = model.load_state_dict(torch.load(
+                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
+                map_location="cpu"),
+                                         strict=False)
             print("unmatched params", keys, flush=True)
-            keys = predictor.load_state_dict(torch.load(f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt", map_location="cpu"), strict=False)
+            keys = predictor.load_state_dict(torch.load(
+                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt",
+                map_location="cpu"),
+                                             strict=False)
             print("unmatched params", keys, flush=True)
-        
 
-        optimizer = torch.optim.Adam([{'params': model.parameters(), "lr": args.gnnlr}, 
-           {'params': predictor.parameters(), 'lr': args.prelr}])
-        
+        optimizer = torch.optim.Adam([{
+            'params': model.parameters(),
+            "lr": args.gnnlr
+        }, {
+            'params': predictor.parameters(),
+            'lr': args.prelr
+        }])
+
         for epoch in range(1, 1 + args.epochs):
-            alpha = max(0, min((epoch-5)*0.1, 1)) if args.increasealpha else None
+            alpha = max(0, min(
+                (epoch - 5) * 0.1, 1)) if args.increasealpha else None
             t1 = time.time()
             loss = train(model, predictor, data, split_edge, optimizer,
                          args.batch_size, args.maskinput, [], alpha)
             print(f"trn time {time.time()-t1:.2f} s", flush=True)
             if True:
                 t1 = time.time()
-                results, h = test(model, predictor, data, split_edge, evaluator,
-                               args.testbs, args.use_valedges_as_input)
+                results, h = test(model, predictor, data, split_edge,
+                                  evaluator, args.testbs,
+                                  args.use_valedges_as_input)
                 print(f"test time {time.time()-t1:.2f} s")
                 if bestscore is None:
                     bestscore = {key: list(results[key]) for key in results}
@@ -307,12 +449,24 @@ def main():
                         if valid_hits > bestscore[key][1]:
                             bestscore[key] = list(result)
                             if args.save_gemb:
-                                torch.save(h, f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt")
+                                torch.save(
+                                    h,
+                                    f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
+                                )
                             if args.savex:
-                                torch.save(model.xemb[0].weight.detach(), f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt")
+                                torch.save(
+                                    model.xemb[0].weight.detach(),
+                                    f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                                )
                             if args.savemod:
-                                torch.save(model.state_dict(), f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt")
-                                torch.save(predictor.state_dict(), f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt")
+                                torch.save(
+                                    model.state_dict(),
+                                    f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                                )
+                                torch.save(
+                                    predictor.state_dict(),
+                                    f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt"
+                                )
                         print(key)
                         print(f'Run: {run + 1:02d}, '
                               f'Epoch: {epoch:02d}, '
@@ -336,7 +490,9 @@ def main():
             raise NotImplementedError
     ret = np.array(ret)
     print(ret)
-    print(f"Final result: val {np.average(ret[:, 0]):.4f} {np.std(ret[:, 0]):.4f} tst {np.average(ret[:, 1]):.4f} {np.std(ret[:, 1]):.4f}")
+    print(
+        f"Final result: val {np.average(ret[:, 0]):.4f} {np.std(ret[:, 0]):.4f} tst {np.average(ret[:, 1]):.4f} {np.std(ret[:, 1]):.4f}"
+    )
 
 
 if __name__ == "__main__":

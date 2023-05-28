@@ -11,7 +11,7 @@ from MPNN import convdict, GCN
 from functools import partial
 
 from ogb.linkproppred import Evaluator
-from ogbdataset import loaddataset
+from dataset import loaddataset
 from torch.utils.tensorboard import SummaryWriter
 from utils import PermIterator
 import time
