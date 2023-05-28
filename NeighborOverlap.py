@@ -5,10 +5,12 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch_sparse import SparseTensor
 import torch_geometric.transforms as T
-from model import predictor_dict, convdict, GCN, DropEdge
+from Predictor import predictor_dict
+from MPNN import convdict, GCN
+from EDropout import DropEdge
 from functools import partial
 from sklearn.metrics import roc_auc_score, average_precision_score
-from ogb.linkproppred import PygLinkPropPredDataset, Evaluator
+from ogb.linkproppred import Evaluator
 from torch_geometric.utils import negative_sampling
 from torch.utils.tensorboard import SummaryWriter
 from utils import PermIterator

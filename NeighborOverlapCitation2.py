@@ -6,7 +6,8 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch_sparse import SparseTensor
 import torch_geometric.transforms as T
-from model import predictor_dict, convdict, GCN, DropEdge
+from Predictor import predictor_dict
+from MPNN import convdict, GCN
 from functools import partial
 
 from ogb.linkproppred import Evaluator
