@@ -4,8 +4,7 @@ from ogb.linkproppred import PygLinkPropPredDataset
 import torch_geometric.transforms as T
 from torch_sparse import SparseTensor
 from torch_geometric.datasets import Planetoid
-from torch_geometric.utils import train_test_split_edges, negative_sampling, to_undirected
-from torch_geometric.transforms import RandomLinkSplit
+from torch_geometric.utils import train_test_split_edges, to_undirected
 
 # random split dataset
 def randomsplit(dataset, val_ratio: float=0.10, test_ratio: float=0.2):

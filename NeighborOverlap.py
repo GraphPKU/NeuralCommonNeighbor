@@ -7,7 +7,6 @@ from torch_sparse import SparseTensor
 import torch_geometric.transforms as T
 from Predictor import predictor_dict
 from MPNN import convdict, GCN
-from EDropout import DropEdge
 from functools import partial
 from sklearn.metrics import roc_auc_score, average_precision_score
 from ogb.linkproppred import Evaluator
@@ -15,7 +14,7 @@ from torch_geometric.utils import negative_sampling
 from torch.utils.tensorboard import SummaryWriter
 from utils import PermIterator
 import time
-from ogbdataset import loaddataset
+from dataset import loaddataset
 from typing import Iterable
 
 

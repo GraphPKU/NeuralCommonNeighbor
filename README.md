@@ -12,7 +12,7 @@ conda env create -f env.yaml
 **Prepare Datasets**
 
 ```
-python ogbdataset.py
+python dataset.py
 ```
 
 **Reproduce Results**
