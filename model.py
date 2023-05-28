@@ -138,6 +138,7 @@ class GCN(nn.Module):
         if jk:
             self.register_parameter("jkparams", nn.Parameter(torch.randn((num_layers,))))
             
+        self.convs = nn.ModuleList()
         if num_layers == 0 or conv_fn =="none":
             self.jk = False
             return
@@ -148,7 +149,7 @@ class GCN(nn.Module):
         if num_layers == 1:
             hidden_channels = out_channels
 
-        self.convs = nn.ModuleList()
+        
         self.lins = nn.ModuleList()
         if "pure" in conv_fn:
             self.convs.append(convfn(hidden_channels, hidden_channels))
