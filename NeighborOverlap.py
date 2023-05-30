@@ -422,19 +422,19 @@ def main():
             with torch.no_grad():
                 model.xemb[0].weight.copy_(
                     torch.load(
-                        f"gemb/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
+                        f"{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
                         map_location="cpu"))
             model.xemb[0].weight.requires_grad_(False)
         predictor = predfn(args.hiddim, args.hiddim, 1, args.nnlayers,
                            args.predp, args.preedp, args.lnnn).to(device)
         if args.loadmod:
             keys = model.load_state_dict(torch.load(
-                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
+                f"{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
                 map_location="cpu"),
                                          strict=False)
             print("unmatched params", keys, flush=True)
             keys = predictor.load_state_dict(torch.load(
-                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt",
+                f"{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt",
                 map_location="cpu"),
                                              strict=False)
             print("unmatched params", keys, flush=True)
@@ -477,21 +477,21 @@ def main():
                             if args.save_gemb:
                                 torch.save(
                                     h,
-                                    f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
+                                    f"{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
                                 )
                             if args.savex:
                                 torch.save(
                                     model.xemb[0].weight.detach(),
-                                    f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                                    f"{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
                                 )
                             if args.savemod:
                                 torch.save(
                                     model.state_dict(),
-                                    f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                                    f"{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
                                 )
                                 torch.save(
                                     predictor.state_dict(),
-                                    f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt"
+                                    f"{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt"
                                 )
                         print(key)
                         print(f'Run: {run + 1:02d}, '
