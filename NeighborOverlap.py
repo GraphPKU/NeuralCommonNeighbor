@@ -163,6 +163,29 @@ def test(model, predictor, data, split_edge, evaluator, batch_size,
     return results, h.cpu()
 
 
+@torch.no_grad()
+def predictfullgraph(model, predictor, data, batch_size):
+    model.eval()
+    predictor.eval()
+
+    N = data.num_nodes
+
+    tar_edge1 = torch.arange(N, device=data.x.device).reshape(-1,1).repeat(1, N).flatten()
+    tar_edge2 = torch.arange(N, device=data.x.device).reshape(1,-1).repeat(N, 1).flatten()
+    tar_edge = torch.stack((tar_edge1, tar_edge2))
+
+    adj = data.adj_t
+    h = model(data.x, adj)
+
+    pred = torch.cat([
+        predictor(h, adj, tar_edge[:, perm]).squeeze().cpu()
+        for perm in PermIterator(tar_edge.device,
+                                 tar_edge.shape[1], batch_size, False)
+    ], dim=0)
+    return pred.reshape(N, N)
+    
+
+
 def parseargs():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -178,6 +201,9 @@ def parseargs():
                         type=int,
                         default=3,
                         help="number of repeated runs")
+    parser.add_argument('--predictfullgraph',
+                        action="store_true",
+                        help="whether to predict the full adjacency matrix")
     parser.add_argument('--dataset', type=str, default="collab")
 
     parser.add_argument('--batch_size',
@@ -476,23 +502,28 @@ def main():
                               f'Test: {100 * test_hits:.2f}%')
                     print('---', flush=True)
         print(f"best {bestscore}")
-        if args.dataset == "collab":
-            ret.append(bestscore["Hits@50"][-2:])
-        elif args.dataset == "ppa":
-            ret.append(bestscore["Hits@100"][-2:])
-        elif args.dataset == "ddi":
-            ret.append(bestscore["Hits@20"][-2:])
-        elif args.dataset == "citation2":
-            ret.append(bestscore[-2:])
-        elif args.dataset in ["Pubmed", "Cora", "Citeseer"]:
-            ret.append(bestscore["Hits@100"][-2:])
-        else:
-            raise NotImplementedError
-    ret = np.array(ret)
-    print(ret)
-    print(
-        f"Final result: val {np.average(ret[:, 0]):.4f} {np.std(ret[:, 0]):.4f} tst {np.average(ret[:, 1]):.4f} {np.std(ret[:, 1]):.4f}"
-    )
+        if args.predictfullgraph:
+            adj = predictfullgraph(model, predictor, data, args.testbs)
+            torch.save(adj.cpu(), "adj.pt")
+        if bestscore is not None:
+            if args.dataset == "collab":
+                ret.append(bestscore["Hits@50"][-2:])
+            elif args.dataset == "ppa":
+                ret.append(bestscore["Hits@100"][-2:])
+            elif args.dataset == "ddi":
+                ret.append(bestscore["Hits@20"][-2:])
+            elif args.dataset == "citation2":
+                ret.append(bestscore[-2:])
+            elif args.dataset in ["Pubmed", "Cora", "Citeseer"]:
+                ret.append(bestscore["Hits@100"][-2:])
+            else:
+                ret.append(bestscore["Hits@100"][-2:])
+    if len(ret)>0:
+        ret = np.array(ret)
+        print(ret)
+        print(
+            f"Final result: val {np.average(ret[:, 0]):.4f} {np.std(ret[:, 0]):.4f} tst {np.average(ret[:, 1]):.4f} {np.std(ret[:, 1]):.4f}"
+        )
 
 
 if __name__ == "__main__":
