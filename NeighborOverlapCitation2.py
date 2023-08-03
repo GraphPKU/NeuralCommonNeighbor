@@ -101,17 +101,34 @@ def test(model, predictor, data, split_edge, evaluator, batch_size):
             src, dst_neg = source[perm], target_neg[perm]
             neg_preds += [predictor(h, adj, torch.stack((src, dst_neg))).squeeze().cpu()]
         neg_pred = torch.cat(neg_preds, dim=0).view(-1, 1000)
+        ret = {}
+        ret["mrr"] = evaluator.eval({
+                'y_pred_pos': pos_pred,
+                'y_pred_neg': neg_pred,
+            })['mrr_list'].mean().item()
+        y_pred_pos, y_pred_neg, type_info = evaluator._parse_and_check_input({
+                'y_pred_pos': pos_pred,
+                'y_pred_neg': neg_pred,
+            })
+        def fasthit(y_pred_pos, y_pred_neg, K):
+            n = y_pred_pos.shape[0]
+            y_pred_pos = y_pred_pos.reshape(n, 1)
+            y_pred_neg = y_pred_neg.reshape(n, 1000)
+            rank = torch.sum((y_pred_neg>y_pred_pos), dim=-1) + 1
+            return torch.mean((rank<=K).float())
+        for K in [1, 3, 10, 20, 50, 100]:
+            ret[f"hits@{K}"] = fasthit(y_pred_pos, y_pred_neg, K)
 
-        return evaluator.eval({
-            'y_pred_pos': pos_pred,
-            'y_pred_neg': neg_pred,
-        })['mrr_list'].mean().item()
+        return ret
 
     train_mrr = 0.0 #test_split('eval_train')
     valid_mrr = test_split('valid')
     test_mrr = test_split('test')
 
-    return train_mrr, valid_mrr, test_mrr, h.cpu()
+    ret = {}
+    for key in valid_mrr:
+        ret[key] = (0, valid_mrr[key], test_mrr[key])
+    return ret, h.cpu()
 
 
 def parseargs():
@@ -187,10 +204,10 @@ def main():
     if args.predictor in ["incn1cn1", "sincn1cn1"]:
         predfn = partial(predfn, depth=args.depth, splitsize=args.splitsize, scale=args.probscale, offset=args.proboffset, trainresdeg=args.trndeg, testresdeg=args.tstdeg, pt=args.pt, learnablept=args.learnpt, alpha=args.alpha)
     ret = []
-
+    bestscores = []
     for run in range(args.runs):
         set_seed(run)
-        bestscore = [0, 0, 0]
+        bestscore = None
         model = GCN(data.num_features, args.hiddim, args.hiddim, args.mplayers,
                     args.gnndp, args.ln, args.res, data.max_x,
                     args.model, args.jk, args.gnnedp,  xdropout=args.xdp, taildropout=args.tdp).to(device)
@@ -202,45 +219,59 @@ def main():
 
         for epoch in range(1, 1 + args.epochs):
             t1 = time.time()
-            loss = train(model, predictor, data, split_edge, optimizer,
-                         args.batch_size, args.maskinput)
+            loss = train(model, predictor, data, split_edge, optimizer,args.batch_size, args.maskinput)
             print(f"trn time {time.time()-t1:.2f} s")
-            if True:
-                t1 = time.time()
-                results = test(model, predictor, data, split_edge, evaluator,
-                               args.testbs)
-                results, h = results[:-1], results[-1]
-                print(f"test time {time.time()-t1:.2f} s")
-                writer.add_scalars(f"mrr_{run}", {
-                        "trn": results[0],
-                        "val": results[1],
-                        "tst": results[2]
-                    }, epoch)
-
-                if True:
-                    train_mrr, valid_mrr, test_mrr = results
-                    train_mrr, valid_mrr, test_mrr = results
-                    if valid_mrr > bestscore[1]:
-                        bestscore = list(results) 
-                        bestscore = list(results) 
-                        if args.save_gemb:
-                            torch.save(h, f"gemb/citation2_{args.model}_{args.predictor}.pt")
-
-                    print(f'Run: {run + 1:02d}, '
-                              f'Epoch: {epoch:02d}, '
-                              f'Loss: {loss:.4f}, '
-                              f'Train: {100 * train_mrr:.2f}%, '
-                              f'Valid: {100 * valid_mrr:.2f}%, '
-                              f'Test: {100 * test_mrr:.2f}%')
-                    print('---', flush=True)
+            t1 = time.time()
+            results, h = test(model, predictor, data, split_edge, evaluator,
+                           args.testbs)
+            if bestscore is None:
+                bestscore = {key: list(results[key]) for key in results}
+            print(f"test time {time.time()-t1:.2f} s")
+            for key in results:
+                result = results[key]
+                train_hits, valid_hits, test_hits = result
+                if valid_hits > bestscore[key][1]:
+                    bestscore[key] = list(result)
+                    if args.save_gemb:
+                        torch.save(
+                            h,
+                            f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
+                        )
+                    if args.savex:
+                        torch.save(
+                            model.xemb[0].weight.detach(),
+                            f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                        )
+                    if args.savemod:
+                        torch.save(
+                            model.state_dict(),
+                            f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
+                        )
+                        torch.save(
+                            predictor.state_dict(),
+                            f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt"
+                        )
+                print(key)
+                print(f'Run: {run + 1:02d}, '
+                      f'Epoch: {epoch:02d}, '
+                      f'Loss: {loss:.4f}, '
+                      f'Train: {100 * train_hits:.2f}%, '
+                      f'Valid: {100 * valid_hits:.2f}%, '
+                      f'Test: {100 * test_hits:.2f}%')
+            print('---', flush=True)
+        bestscores.append(bestscore)
         print(f"best {bestscore}")
         if args.dataset == "citation2":
-            ret.append(bestscore)
+            ret.append(bestscore["mrr"][-2:])
         else:
             raise NotImplementedError
+    for key in bestscores[0]:
+        tmp = [bs[key][-2:] for bs in bestscores]
+        print(f"{key} {np.average(tmp)} {np.std(tmp)}")
     ret = np.array(ret)
     print(ret)
-    print(f"Final result: {np.average(ret[:, 1])} {np.std(ret[:, 1])} {np.average(ret[:, 2])} {np.std(ret[:, 2])}")
-
+    print(
+        f"Final result: val {np.average(ret[:, 0]):.4f} {np.std(ret[:, 0]):.4f} tst {np.average(ret[:, 1]):.4f} {np.std(ret[:, 1]):.4f}"
+    )
 if __name__ == "__main__":
     main()
