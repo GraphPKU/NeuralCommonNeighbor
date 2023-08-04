@@ -420,16 +420,28 @@ def main():
         predictor = predfn(args.hiddim, args.hiddim, 1, args.nnlayers,
                            args.predp, args.preedp, args.lnnn).to(device)
         if args.loadmod:
-            keys = model.load_state_dict(torch.load(
-                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
-                map_location="cpu"),
-                                         strict=False)
-            print("unmatched params", keys, flush=True)
-            keys = predictor.load_state_dict(torch.load(
-                f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt",
-                map_location="cpu"),
-                                             strict=False)
-            print("unmatched params", keys, flush=True)
+            if args.predictor == "pincn1cn1":
+                keys = model.load_state_dict(torch.load(
+                    f"gmodel/{args.dataset}_{args.model}_pcn1_{args.hiddim}_{run}.pt",
+                    map_location="cpu"),
+                                            strict=False)
+                print("unmatched params", keys, flush=True)
+                keys = predictor.load_state_dict(torch.load(
+                    f"gmodel/{args.dataset}_{args.model}_pcn1_{args.hiddim}_{run}.pre.pt",
+                    map_location="cpu"),
+                                                strict=False)
+                print("unmatched params", keys, flush=True)
+            else:
+                keys = model.load_state_dict(torch.load(
+                    f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pt",
+                    map_location="cpu"),
+                                            strict=False)
+                print("unmatched params", keys, flush=True)
+                keys = predictor.load_state_dict(torch.load(
+                    f"gmodel/{args.dataset}_{args.model}_cn1_{args.hiddim}_{run}.pre.pt",
+                    map_location="cpu"),
+                                                strict=False)
+                print("unmatched params", keys, flush=True)
 
         optimizer = torch.optim.Adam([{
             'params': model.parameters(),
@@ -470,11 +482,6 @@ def main():
                                 torch.save(
                                     h,
                                     f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
-                                )
-                            if args.savex:
-                                torch.save(
-                                    model.xemb[0].weight.detach(),
-                                    f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
                                 )
                             if args.savemod:
                                 torch.save(

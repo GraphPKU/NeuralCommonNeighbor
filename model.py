@@ -968,6 +968,217 @@ class CN2LinkPredictor(nn.Module):
         return x
 
 
+
+# NCN predictor
+class PureCNLinkPredictor(nn.Module):
+    cndeg: Final[int]
+    def __init__(self,
+                 in_channels,
+                 hidden_channels,
+                 out_channels,
+                 num_layers,
+                 dropout,
+                 edrop=0.0,
+                 ln=False,
+                 cndeg=-1,
+                 use_xlin=False,
+                 tailact=False,
+                 twolayerlin=False,
+                 beta=1.0):
+        super().__init__()
+
+        self.register_parameter("beta", nn.Parameter(beta*torch.ones((1))))
+        self.dropadj = DropAdj(edrop)
+        lnfn = lambda dim, ln: nn.LayerNorm(dim) if ln else nn.Identity()
+
+        self.xlin = nn.Sequential(nn.Linear(hidden_channels, hidden_channels),
+            nn.Dropout(dropout, inplace=True), nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, hidden_channels),
+            lnfn(hidden_channels, ln), nn.Dropout(dropout, inplace=True), nn.ReLU(inplace=True)) if use_xlin else lambda x: 0
+
+        self.xcnlin = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.Dropout(dropout, inplace=True), nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, hidden_channels),
+            lnfn(hidden_channels, ln), nn.Dropout(dropout, inplace=True),
+            nn.ReLU(inplace=True), nn.Linear(hidden_channels, hidden_channels) if not tailact else nn.Identity())
+        self.xijlin = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels), lnfn(hidden_channels, ln),
+            nn.Dropout(dropout, inplace=True), nn.ReLU(inplace=True),
+            nn.Linear(hidden_channels, hidden_channels) if not tailact else nn.Identity())
+        self.lin = nn.Sequential(nn.Linear(hidden_channels, hidden_channels),
+                                 lnfn(hidden_channels, ln),
+                                 nn.Dropout(dropout, inplace=True),
+                                 nn.ReLU(inplace=True),
+                                 nn.Linear(hidden_channels, hidden_channels) if twolayerlin else nn.Identity(),
+                                 lnfn(hidden_channels, ln) if twolayerlin else nn.Identity(),
+                                 nn.Dropout(dropout, inplace=True) if twolayerlin else nn.Identity(),
+                                 nn.ReLU(inplace=True) if twolayerlin else nn.Identity(),
+                                 nn.Linear(hidden_channels, out_channels))
+        self.cndeg = cndeg
+
+    def multidomainforward(self,
+                           x,
+                           adj,
+                           tar_ei,
+                           filled1: bool = False,
+                           cndropprobs: Iterable[float] = []):
+        adj = self.dropadj(adj)
+        x = x + self.xlin(x)
+        cn = adjoverlap(adj, adj, tar_ei, filled1, cnsampledeg=self.cndeg)
+        xcns = [spmm_add(cn, x)]
+
+        
+        xs = torch.cat(
+            [self.lin(self.xcnlin(xcn)) for xcn in xcns],
+            dim=-1)
+        return xs
+
+    def forward(self, x, adj, tar_ei, filled1: bool = False):
+        return self.multidomainforward(x, adj, tar_ei, filled1, [])
+
+
+# NCNC predictor
+class PureIncompleteCN1Predictor(CNLinkPredictor):
+    learnablept: Final[bool]
+    depth: Final[int]
+    splitsize: Final[int]
+    def __init__(self,
+                 in_channels,
+                 hidden_channels,
+                 out_channels,
+                 num_layers,
+                 dropout,
+                 edrop=0.0,
+                 ln=False,
+                 cndeg=-1,
+                 use_xlin=False,
+                 tailact=False,
+                 twolayerlin=False,
+                 beta=1.0,
+                 alpha=1.0,
+                 scale=5,
+                 offset=3,
+                 trainresdeg=8,
+                 testresdeg=128,
+                 pt=0.5,
+                 learnablept=False,
+                 depth=1,
+                 splitsize=-1,
+                 ):
+        super().__init__(in_channels, hidden_channels, out_channels, num_layers, dropout, edrop, ln, cndeg, use_xlin, tailact, twolayerlin, beta)
+        self.learnablept= learnablept
+        self.depth = depth
+        self.splitsize = splitsize
+        self.lins = nn.Sequential()
+        self.register_buffer("alpha", torch.tensor([alpha]))
+        self.register_buffer("pt", torch.tensor([pt]))
+        self.register_buffer("scale", torch.tensor([scale]))
+        self.register_buffer("offset", torch.tensor([offset]))
+
+        self.trainresdeg = trainresdeg
+        self.testresdeg = testresdeg
+        self.ptlin = nn.Sequential(nn.Linear(hidden_channels, hidden_channels), nn.ReLU(inplace=True), nn.Linear(hidden_channels, 1), nn.Sigmoid())
+
+    def clampprob(self, prob, pt):
+        p0 = torch.sigmoid_(self.scale*(prob-self.offset))
+        return self.alpha*pt*p0/(pt*p0+1-p0)
+
+    def multidomainforward(self,
+                           x,
+                           adj,
+                           tar_ei,
+                           filled1: bool = False,
+                           cndropprobs: Iterable[float] = [],
+                           depth: int=None):
+        assert len(cndropprobs) == 0
+        if depth is None:
+            depth = self.depth
+        adj = self.dropadj(adj)
+        xi = x[tar_ei[0]]
+        xj = x[tar_ei[1]]
+        xij = xi*xj
+        x = x + self.xlin(x)
+        if depth > 0.5:
+            cn, cnres1, cnres2 = adjoverlap(
+                    adj,
+                    adj,
+                    tar_ei,
+                    filled1,
+                    calresadj=True,
+                    cnsampledeg=self.cndeg,
+                    ressampledeg=self.trainresdeg if self.training else self.testresdeg)
+        else:
+            cn = adjoverlap(
+                    adj,
+                    adj,
+                    tar_ei,
+                    filled1,
+                    calresadj=False,
+                    cnsampledeg=self.cndeg,
+                    ressampledeg=self.trainresdeg if self.training else self.testresdeg)
+        xcns = [spmm_add(cn, x)]
+        
+        if depth > 0.5:
+            potcn1 = cnres1.coo()
+            potcn2 = cnres2.coo()
+            with torch.no_grad():
+                if self.splitsize < 0:
+                    ei1 = torch.stack((tar_ei[1][potcn1[0]], potcn1[1]))
+                    probcn1 = self.forward(
+                        x, adj, ei1,
+                        filled1, depth-1).flatten()
+                    ei2 = torch.stack((tar_ei[0][potcn2[0]], potcn2[1]))
+                    probcn2 = self.forward(
+                        x, adj, ei2,
+                        filled1, depth-1).flatten()
+                else:
+                    num1 = potcn1[1].shape[0]
+                    ei1 = torch.stack((tar_ei[1][potcn1[0]], potcn1[1]))
+                    probcn1 = torch.empty_like(potcn1[1], dtype=torch.float)
+                    for i in range(0, num1, self.splitsize):
+                        probcn1[i:i+self.splitsize] = self.forward(x, adj, ei1[:, i: i+self.splitsize], filled1, depth-1).flatten()
+                    num2 = potcn2[1].shape[0]
+                    ei2 = torch.stack((tar_ei[0][potcn2[0]], potcn2[1]))
+                    probcn2 = torch.empty_like(potcn2[1], dtype=torch.float)
+                    for i in range(0, num2, self.splitsize):
+                        probcn2[i:i+self.splitsize] = self.forward(x, adj, ei2[:, i: i+self.splitsize],filled1, depth-1).flatten()
+            if self.learnablept:
+                pt = self.ptlin(xij)
+                probcn1 = self.clampprob(probcn1, pt[potcn1[0]]) 
+                probcn2 = self.clampprob(probcn2, pt[potcn2[0]])
+            else:
+                probcn1 = self.clampprob(probcn1, self.pt)
+                probcn2 = self.clampprob(probcn2, self.pt)
+            probcn1 = probcn1 * potcn1[-1]
+            probcn2 = probcn2 * potcn2[-1]
+            cnres1.set_value_(probcn1, layout="coo")
+            cnres2.set_value_(probcn2, layout="coo")
+            xcn1 = spmm_add(cnres1, x)
+            xcn2 = spmm_add(cnres2, x)
+            xcns[0] = xcns[0] + xcn2 + xcn1
+        
+        
+        xs = torch.cat(
+            [self.lin(self.xcnlin(xcn)) for xcn in xcns],
+            dim=-1)
+        return xs
+
+    def setalpha(self, alpha: float):
+        self.alpha.fill_(alpha)
+        print(f"set alpha: {alpha}")
+
+    def forward(self,
+                x,
+                adj,
+                tar_ei,
+                filled1: bool = False,
+                depth: int = None):
+        if depth is None:
+            depth = self.depth
+        return self.multidomainforward(x, adj, tar_ei, filled1, [],
+                                       depth)
+
 predictor_dict = {
     "cn0": CN0LinkPredictor,
     "catscn1": CatSCNLinkPredictor,
@@ -977,5 +1188,7 @@ predictor_dict = {
     "cn1.5": CNhalf2LinkPredictor,
     "cn1res": CNResLinkPredictor,
     "cn2": CN2LinkPredictor,
-    "incn1cn1": IncompleteCN1Predictor
+    "incn1cn1": IncompleteCN1Predictor,
+    "pcn1": PureCNLinkPredictor,
+    "pincn1cn1": PureIncompleteCN1Predictor
 }

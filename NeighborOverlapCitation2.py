@@ -237,20 +237,6 @@ def main():
                             h,
                             f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}.pt"
                         )
-                    if args.savex:
-                        torch.save(
-                            model.xemb[0].weight.detach(),
-                            f"gemb/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
-                        )
-                    if args.savemod:
-                        torch.save(
-                            model.state_dict(),
-                            f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pt"
-                        )
-                        torch.save(
-                            predictor.state_dict(),
-                            f"gmodel/{args.dataset}_{args.model}_{args.predictor}_{args.hiddim}_{run}.pre.pt"
-                        )
                 print(key)
                 print(f'Run: {run + 1:02d}, '
                       f'Epoch: {epoch:02d}, '
